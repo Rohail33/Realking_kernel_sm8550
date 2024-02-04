@@ -109,7 +109,7 @@ struct power_state_drvdata {
 	struct msm_rpm_kvp kvp_req;
 	struct syscore_ops ps_ops;
 	enum power_states current_state;
-	u32 subsys_count;
+	int subsys_count;
 	struct list_head sub_sys_list;
 	bool deep_sleep_allowed;
 };
@@ -124,6 +124,7 @@ static int subsys_suspend(struct subsystem_data *ss_data, struct rproc *rproc, u
 	case SUBSYS_DEEPSLEEP:
 	case SUBSYS_HIBERNATE:
 		ss_data->ignore_ssr = true;
+		adsp_set_ops_stop(rproc, true);
 		rproc_shutdown(rproc);
 		ss_data->ignore_ssr = false;
 		break;
@@ -144,6 +145,7 @@ static int subsys_resume(struct subsystem_data *ss_data, struct rproc *rproc, u3
 	case SUBSYS_DEEPSLEEP:
 	case SUBSYS_HIBERNATE:
 		ss_data->ignore_ssr = true;
+		adsp_set_ops_stop(rproc, false);
 		ret = rproc_boot(rproc);
 		ss_data->ignore_ssr = false;
 		break;
@@ -571,6 +573,12 @@ static int power_state_probe(struct platform_device *pdev)
 	if (!drv)
 		return -ENOMEM;
 
+	if (IS_ENABLED(CONFIG_NOTIFY_AOP)) {
+		drv->qmp = qmp_get(&pdev->dev);
+		if (IS_ERR(drv->qmp))
+			return -EPROBE_DEFER;
+	}
+
 	drv->ps_pm_nb.notifier_call = ps_pm_cb;
 	drv->ps_pm_nb.priority = PS_PM_NOTIFIER_PRIORITY;
 	ret = register_pm_notifier(&drv->ps_pm_nb);
@@ -584,6 +592,8 @@ static int power_state_probe(struct platform_device *pdev)
 	INIT_LIST_HEAD(&drv->sub_sys_list);
 
 	drv->subsys_count = of_property_count_strings(dn, "qcom,subsys-name");
+	if (drv->subsys_count < 0)
+		drv->subsys_count = 0;
 	for (i = 0; i < drv->subsys_count; i++) {
 		of_property_read_string_index(dn, "qcom,subsys-name", i, &name);
 
@@ -597,7 +607,7 @@ static int power_state_probe(struct platform_device *pdev)
 			goto remove_ss;
 		}
 
-		ss_data->name = name;
+		ss_data->name = kstrdup_const(name, GFP_KERNEL);
 		ss_data->rproc_handle = rproc_handle;
 
 		ss_data->ps_ssr_nb.notifier_call = ps_ssr_cb;
@@ -621,14 +631,6 @@ static int power_state_probe(struct platform_device *pdev)
 		}
 
 		list_add_tail(&ss_data->list, &drv->sub_sys_list);
-	}
-
-	if (IS_ENABLED(CONFIG_NOTIFY_AOP)) {
-		drv->qmp = qmp_get(&pdev->dev);
-		if (IS_ERR(drv->qmp)) {
-			ret = PTR_ERR(drv->qmp);
-			goto remove_ss;
-		}
 	}
 
 	ret = power_state_dev_init(drv);

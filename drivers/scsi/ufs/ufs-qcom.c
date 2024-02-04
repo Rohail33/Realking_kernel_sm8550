@@ -3913,9 +3913,13 @@ static int ufs_qcom_init(struct ufs_hba *hba)
 					 &host->vdd_hba_reg_nb);
 
 	/* update phy revision information before calling phy_init() */
-
-	ufs_qcom_phy_save_controller_version(host->generic_phy,
+	err = ufs_qcom_phy_save_controller_version(host->generic_phy,
 			host->hw_ver.major, host->hw_ver.minor, host->hw_ver.step);
+
+	if (err == -EPROBE_DEFER) {
+		pr_err("%s: phy device probe is not completed yet\n", __func__);
+		goto out_variant_clear;
+	}
 
 	err = ufs_qcom_parse_reg_info(host, "qcom,vddp-ref-clk",
 				      &host->vddp_ref_clk);
@@ -5398,14 +5402,20 @@ static void ufs_qcom_hook_prepare_command(void *param, struct ufs_hba *hba,
 #if IS_ENABLED(CONFIG_QTI_CRYPTO_FDE)
 	struct ice_data_setting setting;
 
-	if (!crypto_qti_ice_config_start(rq, &setting)) {
-		if ((rq_data_dir(rq) == WRITE) ? setting.encr_bypass : setting.decr_bypass) {
-			lrbp->crypto_key_slot = -1;
-		} else {
-			lrbp->crypto_key_slot = setting.crypto_data.key_index;
-			lrbp->data_unit_num = rq->bio->bi_iter.bi_sector >>
-					      ICE_CRYPTO_DATA_UNIT_4_KB;
+	if (!rq->crypt_keyslot) {
+		if (!crypto_qti_ice_config_start(rq, &setting)) {
+			if ((rq_data_dir(rq) == WRITE) ? setting.encr_bypass :
+					setting.decr_bypass) {
+				lrbp->crypto_key_slot = -1;
+			} else {
+				lrbp->crypto_key_slot = setting.crypto_data.key_index;
+				lrbp->data_unit_num = rq->bio->bi_iter.bi_sector >>
+						      ICE_CRYPTO_DATA_UNIT_4_KB;
+			}
 		}
+	} else {
+		lrbp->crypto_key_slot = blk_ksm_get_slot_idx(rq->crypt_keyslot);
+		lrbp->data_unit_num = rq->crypt_ctx->bc_dun[0];
 	}
 #endif
 }

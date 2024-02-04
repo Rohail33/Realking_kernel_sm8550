@@ -577,7 +577,7 @@ int mhi_download_amss_image(struct mhi_controller *mhi_cntrl)
 			       /* Vector table is the last entry */
 			       &image_info->mhi_buf[image_info->entries - 1]);
 	if (ret) {
-		dev_err(dev, "MHI did not load AMSS, ret:%d\n", ret);
+		MHI_ERR(dev, "MHI did not load AMSS, ret:%d\n", ret);
 		write_lock_irq(&mhi_cntrl->pm_lock);
 		new_state = mhi_tryset_pm_state(mhi_cntrl, MHI_PM_FW_DL_ERR);
 		write_unlock_irq(&mhi_cntrl->pm_lock);
