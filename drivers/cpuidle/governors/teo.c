@@ -106,13 +106,15 @@
 #include <linux/kernel.h>
 #include <linux/sched/clock.h>
 #include <linux/tick.h>
-
+#include <linux/sched.h>
+#include <linux/sched/topology.h>
 /*
  * The PULSE value is added to metrics when they grow and the DECAY_SHIFT value
  * is used for decreasing metrics on a regular basis.
  */
 #define PULSE		1024
 #define DECAY_SHIFT	3
+#define UTIL_THRESHOLD_SHIFT 6
 
 /*
  * Number of the most recent idle duration values to take into consideration for
@@ -148,9 +150,32 @@ struct teo_cpu {
 	unsigned int total;
 	int next_recent_idx;
 	int recent_idx[NR_RECENT];
+	unsigned long util_threshold;
+	bool utilized;
 };
 
 static DEFINE_PER_CPU(struct teo_cpu, teo_cpus);
+
+/**
+ * teo_cpu_is_utilized - Check if the CPU's util is above the threshold
+ * @cpu: Target CPU
+ * @cpu_data: Governor CPU data for the target CPU
+ */
+#ifdef CONFIG_SMP
+static bool teo_cpu_is_utilized(int cpu, struct teo_cpu *cpu_data)
+{
+	unsigned long max = arch_scale_cpu_capacity(cpu);
+
+	return sched_cpu_util(cpu, max) > cpu_data->util_threshold;
+}
+#else
+static bool teo_cpu_is_utilized(int cpu, struct teo_cpu *cpu_data)
+{
+	return false;
+}
+#endif
+
+
 
 /**
  * teo_update - Update CPU metrics after wakeup.
@@ -317,6 +342,20 @@ static int teo_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 		idx = 0;
 		goto end;
 	}
+	cpu_data->utilized = teo_cpu_is_utilized(dev->cpu, cpu_data);
+	/*
+	 * The cpu is being utilized over the threshold there are only 2 states to choose from.
+	 * No need to consider metrics, choose the shallowest non-polling state and exit.
+	 */
+	if (drv->state_count < 3 && cpu_data->utilized) {
+		for (i = 0; i < drv->state_count; ++i) {
+			if (!dev->states_usage[i].disable && !(drv->states[i].flags & CPUIDLE_FLAG_POLLING)) {
+				idx = i;
+				goto end;
+			}
+		}
+	}
+
 	if (!dev->states_usage[0].disable) {
 		idx = 0;
 		if (drv->states[1].target_residency_ns > duration_ns)
@@ -453,6 +492,14 @@ static int teo_select(struct cpuidle_driver *drv, struct cpuidle_device *dev,
 	 */
 	if (idx > constraint_idx)
 		idx = constraint_idx;
+	/*
+	 * If the CPU is being utilized over the threshold,
+	 * choose a shallower non-polling state to improve latency
+	 */
+	if (cpu_data->utilized)
+		idx = teo_find_shallower_state(drv, dev, idx, duration_ns, true);
+
+	
 
 end:
 	/*
@@ -510,9 +557,11 @@ static int teo_enable_device(struct cpuidle_driver *drv,
 			     struct cpuidle_device *dev)
 {
 	struct teo_cpu *cpu_data = per_cpu_ptr(&teo_cpus, dev->cpu);
+	unsigned long max_capacity = arch_scale_cpu_capacity(dev->cpu);
 	int i;
 
 	memset(cpu_data, 0, sizeof(*cpu_data));
+	cpu_data->util_threshold = max_capacity >> UTIL_THRESHOLD_SHIFT;
 
 	for (i = 0; i < NR_RECENT; i++)
 		cpu_data->recent_idx[i] = -1;
