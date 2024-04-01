@@ -248,6 +248,7 @@ struct plat_stmmacenet_data {
 	int (*crosststamp)(ktime_t *device, struct system_counterval_t *system,
 			   void *ctx);
 	void (*dump_debug_regs)(void *priv);
+	unsigned int (*get_eth_type)(unsigned char *buf);
 	void *bsp_priv;
 	struct clk *stmmac_clk;
 	struct clk *pclk;
@@ -303,5 +304,7 @@ struct plat_stmmacenet_data {
 	int mac2mac_link;
 	bool early_eth;
 	bool sph_disable;
+	void (*phy_irq_enable)(void *priv);
+	void (*phy_irq_disable)(void *priv);
 };
 #endif

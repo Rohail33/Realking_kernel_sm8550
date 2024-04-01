@@ -18,6 +18,8 @@
 #include "dwmac4.h"
 #include "stmmac.h"
 
+#define PTP_LIMIT 100000
+
 static void config_hw_tstamping(void __iomem *ioaddr, u32 data)
 {
 	writel(data, ioaddr + PTP_TCR);
@@ -53,8 +55,10 @@ static void config_sub_second_increment(void __iomem *ioaddr,
 	if (!(value & PTP_TCR_TSCTRLSSR))
 		ss_inc = div_u64((ss_inc * 1000), 465);
 
-	if (data > PTP_SSIR_SSINC_MAX)
-		data = PTP_SSIR_SSINC_MAX;
+	ss_inc &= PTP_SSIR_SSINC_MAX;
+	sns_inc &= PTP_SSIR_SNSINC_MASK;
+
+	reg_value = ss_inc;
 
 	if (gmac4)
 		reg_value <<= GMAC4_PTP_SSIR_SSINC_SHIFT;
@@ -70,6 +74,17 @@ static void config_sub_second_increment(void __iomem *ioaddr,
 static int init_systime(void __iomem *ioaddr, u32 sec, u32 nsec)
 {
 	u32 value;
+	int limit;
+
+	/* wait for previous(if any) time initialization to complete. */
+	limit = PTP_LIMIT;
+	while (limit--) {
+		if (!(readl_relaxed(ioaddr + PTP_TCR) &  PTP_TCR_TSINIT))
+			break;
+		usleep_range(1000, 1500);
+	}
+	if (limit < 0)
+		return -EBUSY;
 
 	writel(sec, ioaddr + PTP_STSUR);
 	writel(nsec, ioaddr + PTP_STNSUR);
@@ -113,6 +128,16 @@ static int adjust_systime(void __iomem *ioaddr, u32 sec, u32 nsec,
 {
 	u32 value;
 	int limit;
+
+	/* wait for previous(if any) time adjust/update to complete. */
+	limit = PTP_LIMIT;
+	while (limit--) {
+		if (!(readl_relaxed(ioaddr + PTP_TCR) & PTP_TCR_TSUPDT))
+			break;
+		usleep_range(1000, 1500);
+	}
+	if (limit < 0)
+		return -EBUSY;
 
 	if (add_sub) {
 		/* If the new sec value needs to be subtracted with

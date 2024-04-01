@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/cache.h>
@@ -577,7 +577,7 @@ static void register_irq_stack(void)
 			for (i = 0; i < irq_stack_pages_count; i++) {
 				scnprintf(irq_sp_entry.name,
 				sizeof(irq_sp_entry.name),
-					"KISTACK%d_%d", cpu, i);
+					"KISTK%d_%d", cpu, i);
 				register_stack_entry(&irq_sp_entry, sp,
 					PAGE_SIZE);
 				sp += PAGE_SIZE;
@@ -585,7 +585,7 @@ static void register_irq_stack(void)
 		} else {
 			sp = irq_stack_base;
 			scnprintf(irq_sp_entry.name, sizeof(irq_sp_entry.name),
-				"KISTACK%d", cpu);
+				"KISTK%d", cpu);
 			register_stack_entry(&irq_sp_entry, sp, IRQ_STACK_SIZE);
 			}
 	}
@@ -1213,9 +1213,9 @@ static void md_register_panic_data(void)
 		md_debugfs_slabowner(minidump_dir);
 	}
 #endif
-	md_register_memory_dump(md_dma_buf_info_size, "DMABUF_INFO");
+	md_register_memory_dump(md_dma_buf_info_size, "DMA_INFO");
 	md_debugfs_dmabufinfo(minidump_dir);
-	md_register_memory_dump(md_dma_buf_procs_size, "DMABUF_PROCS");
+	md_register_memory_dump(md_dma_buf_procs_size, "DMA_PROC");
 	md_debugfs_dmabufprocs(minidump_dir);
 }
 
@@ -1428,7 +1428,11 @@ static void register_pstore_info(void)
 }
 #endif
 
+#if !IS_MODULE(CONFIG_QCOM_MINIDUMP)
+static int __init msm_minidump_log_init(void)
+#else
 int msm_minidump_log_init(void)
+#endif
 {
 	register_kernel_sections();
 	is_vmap_stack = IS_ENABLED(CONFIG_VMAP_STACK);
@@ -1453,3 +1457,9 @@ int msm_minidump_log_init(void)
 #endif
 	return 0;
 }
+
+#if !IS_MODULE(CONFIG_QCOM_MINIDUMP)
+late_initcall(msm_minidump_log_init)
+#endif
+
+MODULE_IMPORT_NS(MINIDUMP);

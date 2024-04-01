@@ -332,6 +332,8 @@ enum mhi_cmd_type {
 #define MHI_RSCTRE_DATA_DWORD0(cookie) (cpu_to_le32(cookie))
 #define MHI_RSCTRE_DATA_DWORD1 (cpu_to_le32(MHI_PKT_TYPE_COALESCING << 16))
 
+#define MHI_RSCTRE_MIN_CREDITS (8)
+
 enum mhi_pkt_type {
 	MHI_PKT_TYPE_INVALID = 0x0,
 	MHI_PKT_TYPE_NOOP_CMD = 0x1,
@@ -581,6 +583,9 @@ struct mhi_chan {
 	bool offload_ch;
 	bool pre_alloc;
 	bool wake_capable;
+
+	/* stats */
+	u32 mode_change;
 };
 
 /* Default MHI timeout */
@@ -649,6 +654,12 @@ static inline void mhi_trigger_resume(struct mhi_controller *mhi_cntrl)
 	pm_wakeup_event(&mhi_cntrl->mhi_dev->dev, 0);
 	mhi_cntrl->runtime_get(mhi_cntrl);
 	mhi_cntrl->runtime_put(mhi_cntrl);
+}
+
+static inline bool is_valid_ring_ptr(struct mhi_ring *ring, dma_addr_t addr)
+{
+	return ((addr >= ring->iommu_base &&
+		addr < ring->iommu_base + ring->len) && (addr % 16 == 0));
 }
 
 /* Register access methods */

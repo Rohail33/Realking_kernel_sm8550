@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/mm.h>
@@ -127,10 +127,8 @@ void md_dump_meminfo(struct seq_buf *m)
 		    global_node_page_state(NR_WRITEBACK_TEMP));
 	seq_buf_printf(m, "VmallocTotal:   %8lu kB\n",
 		   (unsigned long)VMALLOC_TOTAL >> 10);
-	show_val_kb(m, "VmallocUsed: ",
-			*(unsigned long *)android_debug_symbol(ADS_VMALLOC_NR_PAGES));
-	show_val_kb(m, "Percpu:         ",
-			*(unsigned long *)android_debug_symbol(ADS_PCPU_NR_PAGES));
+	show_val_kb(m, "VmallocUsed: ", vmalloc_nr_pages());
+	show_val_kb(m, "Percpu:         ", pcpu_nr_pages());
 
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 	show_val_kb(m, "AnonHugePages:  ",
@@ -198,23 +196,23 @@ void md_dump_slabinfo(struct seq_buf *m)
 	slab_caches = (struct list_head *)android_debug_symbol(ADS_SLAB_CACHES);
 	slab_mutex = (struct mutex *) android_debug_symbol(ADS_SLAB_MUTEX);
 
-		if (!mutex_trylock(slab_mutex))
-			return;
+	if (!mutex_trylock(slab_mutex))
+		return;
 
 	/* print_slabinfo_header */
-		seq_buf_printf(m,
-				"# name            <active_objs> <num_objs> <objsize> <objperslab> <pagesperslab>");
-		seq_buf_printf(m,
-				" : tunables <limit> <batchcount> <sharedfactor>");
-		seq_buf_printf(m,
-				" : slabdata <active_slabs> <num_slabs> <sharedavail>");
-	#ifdef CONFIG_DEBUG_SLAB
-		seq_buf_printf(m,
-				" : globalstat <listallocs> <maxobjs> <grown> <reaped> <error> <maxfreeable> <nodeallocs> <remotefrees> <alienoverflow>");
-		seq_buf_printf(m,
-				" : cpustat <allochit> <allocmiss> <freehit> <freemiss>");
-	#endif
-		seq_buf_printf(m, "\n");
+	seq_buf_printf(m,
+			"# name            <active_objs> <num_objs> <objsize> <objperslab> <pagesperslab>");
+	seq_buf_printf(m,
+			" : tunables <limit> <batchcount> <sharedfactor>");
+	seq_buf_printf(m,
+			" : slabdata <active_slabs> <num_slabs> <sharedavail>");
+#ifdef CONFIG_DEBUG_SLAB
+	seq_buf_printf(m,
+			" : globalstat <listallocs> <maxobjs> <grown> <reaped> <error> <maxfreeable> <nodeallocs> <remotefrees> <alienoverflow>");
+	seq_buf_printf(m,
+			" : cpustat <allochit> <allocmiss> <freehit> <freemiss>");
+#endif
+	seq_buf_printf(m, "\n");
 
 	/* Loop through all slabs */
 	list_for_each_entry(s, slab_caches, list) {
@@ -277,9 +275,9 @@ bool md_register_memory_dump(int size, char *name)
 	if (!strcmp(name, "SLABOWNER"))
 		WRITE_ONCE(md_slabowner_dump_addr, buffer_start);
 #endif
-	if (!strcmp(name, "DMABUF_INFO"))
+	if (!strcmp(name, "DMA_INFO"))
 		WRITE_ONCE(md_dma_buf_info_addr, buffer_start);
-	if (!strcmp(name, "DMABUF_PROCS"))
+	if (!strcmp(name, "DMA_PROC"))
 		WRITE_ONCE(md_dma_buf_procs_addr, buffer_start);
 	return true;
 }
@@ -693,7 +691,7 @@ static ssize_t page_owner_call_site_write(struct file *file,
 	if (!call_site)
 		return -ENOMEM;
 
-	strscpy(call_site->name, buf, strlen(call_site->name));
+	strscpy(call_site->name, buf, sizeof(call_site->name));
 	spin_lock_irqsave(&accounted_call_site_lock, flags);
 	list_add_tail(&call_site->list, &accounted_call_site_list);
 	spin_unlock_irqrestore(&accounted_call_site_lock, flags);
@@ -1188,7 +1186,7 @@ static ssize_t dma_buf_info_size_write(struct file *file,
 		pr_err_ratelimited("Invalid format for size\n");
 		return -EINVAL;
 	}
-	update_dump_size("DMABUF_INFO", size,
+	update_dump_size("DMA_INFO", size,
 			&md_dma_buf_info_addr, &md_dma_buf_info_size);
 	return count;
 }
@@ -1326,7 +1324,7 @@ static ssize_t dma_buf_procs_size_write(struct file *file,
 		pr_err_ratelimited("Invalid format for size\n");
 		return -EINVAL;
 	}
-	update_dump_size("DMABUF_PROCS", size,
+	update_dump_size("DMA_PROC", size,
 			&md_dma_buf_procs_addr, &md_dma_buf_procs_size);
 	return count;
 }
@@ -1351,3 +1349,5 @@ void md_debugfs_dmabufprocs(struct dentry *minidump_dir)
 	debugfs_create_file("dma_buf_procs_size_mb", 0400, minidump_dir, NULL,
 			&proc_dma_buf_procs_size_ops);
 }
+
+MODULE_IMPORT_NS(MINIDUMP);

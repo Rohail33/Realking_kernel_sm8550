@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* Copyright (c) 2014, 2019-2021, The Linux Foundation. All rights reserved. */
+/* Copyright (c) 2022, Qualcomm Innovation Center, Inc. All rights reserved. */
 
 #ifndef __QCOM_CLK_REGMAP_H__
 #define __QCOM_CLK_REGMAP_H__
@@ -73,10 +74,13 @@ int clk_pre_change_regmap(struct clk_hw *hw, unsigned long cur_rate,
 int clk_post_change_regmap(struct clk_hw *hw, unsigned long old_rate,
 			unsigned long cur_rate);
 int devm_clk_register_regmap(struct device *dev, struct clk_regmap *rclk);
+void devm_clk_regmap_list_node(struct device *dev, struct clk_regmap *rclk);
+
 bool clk_is_regmap_clk(struct clk_hw *hw);
 
 int clk_runtime_get_regmap(struct clk_regmap *rclk);
 void clk_runtime_put_regmap(struct clk_regmap *rclk);
+void clk_restore_critical_clocks(struct device *dev);
 
 struct clk_register_data {
 	char *name;

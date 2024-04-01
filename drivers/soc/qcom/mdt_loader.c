@@ -122,7 +122,7 @@ void *qcom_mdt_read_metadata(struct device *dev, const struct firmware *fw, cons
 	ehdr = (struct elf32_hdr *)fw->data;
 	phdrs = (struct elf32_phdr *)(ehdr + 1);
 
-	if (ehdr->e_phnum < 2)
+	if (ehdr->e_phnum < 2 || ehdr->e_phnum > PN_XNUM)
 		return ERR_PTR(-EINVAL);
 
 	if (phdrs[0].p_type == PT_LOAD)
@@ -138,6 +138,10 @@ void *qcom_mdt_read_metadata(struct device *dev, const struct firmware *fw, cons
 
 	ehdr_size = phdrs[0].p_filesz;
 	hash_size = phdrs[hash_index].p_filesz;
+
+	/* Overflow check */
+	if (ehdr_size >  SIZE_MAX - hash_size)
+		return ERR_PTR(-ENOMEM);
 
 	/*
 	 * During the scm call memory protection will be enabled for the metadata

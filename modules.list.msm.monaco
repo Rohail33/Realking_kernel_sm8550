@@ -1,10 +1,10 @@
 smp2p.ko
 qcom-apcs-ipc-mailbox.ko
+rproc_qcom_common.ko
 glink_probe.ko
 qcom_glink_rpm.ko
 qcom_glink_smem.ko
 rpm-smd.ko
-smd-rpm.ko
 qcom_smd.ko
 qcom_glink.ko
 qcom_ipc_logging.ko
@@ -12,6 +12,7 @@ ns.ko
 qrtr.ko
 qcom_wdt_core.ko
 qcom_soc_wdt.ko
+qcom-mpm.ko
 pinctrl-msm.ko
 pinctrl-monaco.ko
 qcom_cpu_vendor_hooks.ko
@@ -65,3 +66,10 @@ qcom-spmi-pmic.ko
 spmi-pmic-arb.ko
 regmap-spmi.ko
 spmi.ko
+nvmem_qcom-spmi-sdam.ko
+rtc-pm8xxx.ko
+cqhci-crypto-qti.ko
+crypto-qti-common.ko
+crypto-qti-hwkm.ko
+hwkm_v1.ko
+sdhci-msm-scaling.ko

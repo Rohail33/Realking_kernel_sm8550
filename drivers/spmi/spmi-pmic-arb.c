@@ -175,6 +175,7 @@ struct spmi_pmic_arb {
 	int			irq;
 	u8			ee;
 	u32			bus_instance;
+	u8			mid;
 	u16			min_apid;
 	u16			max_apid;
 	u16			base_apid;
@@ -487,6 +488,7 @@ enum qpnpint_regs {
 	QPNPINT_REG_EN_SET		= 0x15,
 	QPNPINT_REG_EN_CLR		= 0x16,
 	QPNPINT_REG_LATCHED_STS		= 0x18,
+	QPNPINT_REG_MID_SEL		= 0x1A,
 };
 
 struct spmi_pmic_arb_qpnpint_type {
@@ -758,6 +760,13 @@ static int qpnpint_irq_domain_activate(struct irq_domain *domain,
 		return -ENODEV;
 	}
 
+	/*
+	 * Make sure the interrupt is assigned to primary SOC by writing the
+	 * MID value to MID_SEL register.
+	 */
+	if (pmic_arb->mid != EINVAL)
+		qpnpint_spmi_write(d, QPNPINT_REG_MID_SEL, &pmic_arb->mid, 1);
+
 	buf = BIT(irq);
 	qpnpint_spmi_write(d, QPNPINT_REG_EN_CLR, &buf, 1);
 	qpnpint_spmi_write(d, QPNPINT_REG_LATCHED_CLR, &buf, 1);
@@ -993,6 +1002,13 @@ static int pmic_arb_read_apid_map_v5(struct spmi_pmic_arb *pmic_arb)
 	 * allowed to write to the APID.  The owner of the last (highest) APID
 	 * which has the IRQ owner bit set for a given PPID will receive
 	 * interrupts from the PPID.
+	 *
+	 * In arbiter version 7, the APID numbering space is divided between
+	 * the primary bus (0) and secondary bus (1) such that:
+	 * APID = 0 to N-1 are assigned to the primary bus
+	 * APID = N to N+M-1 are assigned to the secondary bus
+	 * where N = number of APIDs supported by the primary bus and
+	 *       M = number of APIDs supported by the secondary bus
 	 */
 	apidd = &pmic_arb->apid_data[pmic_arb->base_apid];
 	apid_max = pmic_arb->base_apid + pmic_arb->apid_count;
@@ -1592,7 +1608,7 @@ static int spmi_pmic_arb_probe(struct platform_device *pdev)
 	struct resource *res;
 	void __iomem *core;
 	u32 *mapping_table;
-	u32 channel, ee, hw_ver;
+	u32 channel, ee, hw_ver, mid = 0;
 	int err;
 
 	ctrl = spmi_controller_alloc(&pdev->dev, sizeof(*pmic_arb));
@@ -1802,6 +1818,17 @@ static int spmi_pmic_arb_probe(struct platform_device *pdev)
 	}
 
 	pmic_arb->ee = ee;
+
+	pmic_arb->mid = EINVAL;
+	err = of_property_read_u32(pdev->dev.of_node, "qcom,mid", &mid);
+	if (!err && mid <= 3) {
+		pmic_arb->mid = mid;
+	} else if (err != -EINVAL) {
+		dev_err(&pdev->dev, "invalid MID (%u) specified\n", mid);
+		err = -EINVAL;
+		goto err_put_ctrl;
+	}
+
 	mapping_table = devm_kcalloc(&ctrl->dev, PMIC_ARB_MAX_PERIPHS,
 					sizeof(*mapping_table), GFP_KERNEL);
 	if (!mapping_table) {

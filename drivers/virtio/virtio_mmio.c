@@ -597,7 +597,8 @@ static int virtio_mmio_restore(struct device *dev)
 }
 
 static const struct dev_pm_ops virtio_mmio_pm_ops = {
-	SET_SYSTEM_SLEEP_PM_OPS(virtio_mmio_freeze, virtio_mmio_restore)
+	.freeze		= virtio_mmio_freeze,
+	.restore	= virtio_mmio_restore,
 };
 #endif
 
@@ -1112,7 +1113,9 @@ static struct platform_driver virtio_mmio_driver = {
 		.of_match_table	= virtio_mmio_match,
 		.acpi_match_table = ACPI_PTR(virtio_mmio_acpi_match),
 #ifdef CONFIG_PM_SLEEP
-		.pm	= &virtio_mmio_pm_ops,
+#ifndef CONFIG_VIRTIO_MMIO_SWIOTLB
+		.pm     = &virtio_mmio_pm_ops,
+#endif
 #endif
 	},
 };

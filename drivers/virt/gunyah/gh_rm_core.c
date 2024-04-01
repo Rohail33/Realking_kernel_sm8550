@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
- * Copyright (c) 2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2022-2023 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  */
 
@@ -77,6 +77,7 @@ const static struct {
 	{GH_TRUSTED_VM, "trustedvm", "qcom,trustedvm"},
 	{GH_CPUSYS_VM, "cpusys_vm", "qcom,cpusysvm"},
 	{GH_OEM_VM, "oem_vm", "qcom,oemvm"},
+	{GH_AUTO_VM, "autoghgvm", "qcom,autoghgvm"},
 };
 
 static struct task_struct *gh_rm_drv_recv_task;
@@ -165,8 +166,8 @@ gh_rm_init_connection_buff(struct gh_rm_connection *connection,
 	if (!payload_size)
 		return 0;
 
-	max_buf_size = (GH_MSGQ_MAX_MSG_SIZE_BYTES - hdr_size) *
-			(hdr->fragments + 1);
+	max_buf_size = payload_size +
+			(hdr->fragments * GH_RM_MAX_MSG_SIZE_BYTES);
 
 	if (payload_size > max_buf_size) {
 		pr_err("%s: Payload size exceeds max buff size\n", __func__);
@@ -900,6 +901,26 @@ int gh_rm_populate_hyp_res(gh_vmid_t vmid, const char *vm_name)
 	pr_debug("%s: %d Resources are associated with vmid %d\n",
 		 __func__, n_res, vmid);
 
+	/* Need polulate VCPU first to know if VM support proxy scheduling */
+	for (i = 0; i < n_res; i++) {
+		if (res_entries[i].res_type == GH_RM_RES_TYPE_VCPU) {
+			ret = linux_irq = gh_rm_get_irq(&res_entries[i]);
+			if (ret < 0)
+				goto out;
+
+			cap_id = (u64) res_entries[i].cap_id_high << 32 |
+					res_entries[i].cap_id_low;
+			label = res_entries[i].resource_label;
+			if (gh_vcpu_affinity_set_fn)
+				do {
+					ret = (*gh_vcpu_affinity_set_fn)(
+						vmid, label, cap_id, linux_irq);
+				} while (ret == -EAGAIN);
+			if (ret < 0)
+				goto out;
+		}
+	}
+
 	for (i = 0; i < n_res; i++) {
 		pr_debug("%s: idx:%d res_entries.res_type = 0x%x, res_entries.partner_vmid = 0x%x, res_entries.resource_handle = 0x%x, res_entries.resource_label = 0x%x, res_entries.cap_id_low = 0x%x, res_entries.cap_id_high = 0x%x, res_entries.virq_handle = 0x%x, res_entries.virq = 0x%x res_entries.base_high = 0x%x, res_entries.base_low = 0x%x, res_entries.size_high = 0x%x, res_entries.size_low = 0x%x\n",
 			__func__, i,
@@ -940,10 +961,9 @@ int gh_rm_populate_hyp_res(gh_vmid_t vmid, const char *vm_name)
 					GH_MSGQ_DIRECTION_RX, linux_irq);
 				break;
 			case GH_RM_RES_TYPE_VCPU:
-				if (gh_vcpu_affinity_set_fn)
-					ret = (*gh_vcpu_affinity_set_fn)(vmid, label,
-								cap_id, linux_irq);
+			/* Already populate VCPU resource */
 				break;
+
 			case GH_RM_RES_TYPE_DB_TX:
 				ret = gh_dbl_populate_cap_info(label, cap_id,
 					GH_MSGQ_DIRECTION_TX, linux_irq);

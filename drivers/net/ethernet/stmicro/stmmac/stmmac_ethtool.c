@@ -314,8 +314,8 @@ static int stmmac_ethtool_get_link_ksettings(struct net_device *dev,
 	if (!netif_running(dev))
 		return -EBUSY;
 
-	if (priv->hw->pcs & STMMAC_PCS_RGMII ||
-	    priv->hw->pcs & STMMAC_PCS_SGMII) {
+	if (!priv->plat->has_gmac4 && (priv->hw->pcs & STMMAC_PCS_RGMII ||
+				       priv->hw->pcs & STMMAC_PCS_SGMII)) {
 		struct rgmii_adv adv;
 		u32 supported, advertising, lp_advertising;
 
@@ -410,8 +410,8 @@ stmmac_ethtool_set_link_ksettings(struct net_device *dev,
 		return -ENODEV;
 	}
 
-	if (priv->hw->pcs & STMMAC_PCS_RGMII ||
-	    priv->hw->pcs & STMMAC_PCS_SGMII) {
+	if  (!priv->plat->has_gmac4 && (priv->hw->pcs & STMMAC_PCS_RGMII ||
+					priv->hw->pcs & STMMAC_PCS_SGMII)) {
 		u32 mask = ADVERTISED_Autoneg | ADVERTISED_Pause;
 
 		/* Only support ANE */
@@ -798,6 +798,7 @@ static int stmmac_set_wol(struct net_device *dev, struct ethtool_wolinfo *wol)
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
 	u32 support = WAKE_MAGIC | WAKE_UCAST;
+	int ret = 0;
 
 	if (!priv->phydev) {
 		pr_err("%s: %s: PHY is not registered\n",
@@ -809,7 +810,8 @@ static int stmmac_set_wol(struct net_device *dev, struct ethtool_wolinfo *wol)
 		return -EOPNOTSUPP;
 
 	if (!priv->plat->pmt) {
-		int ret = phylink_ethtool_set_wol(priv->phylink, wol);
+		wol->cmd = ETHTOOL_SWOL;
+		ret = phylink_ethtool_set_wol(priv->phylink, wol);
 
 		if (!ret)
 			device_set_wakeup_enable(priv->device, !!wol->wolopts);
@@ -827,8 +829,13 @@ static int stmmac_set_wol(struct net_device *dev, struct ethtool_wolinfo *wol)
 
 	if (wol->wolopts) {
 		pr_info("stmmac: wakeup enable\n");
+		device_set_wakeup_capable(priv->device, 1);
 		device_set_wakeup_enable(priv->device, 1);
 		enable_irq_wake(priv->wol_irq);
+		if (wol->wolopts == 0)
+			priv->en_wol = false;
+		else
+			priv->en_wol = true;
 	} else {
 		device_set_wakeup_enable(priv->device, 0);
 		disable_irq_wake(priv->wol_irq);

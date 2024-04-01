@@ -236,6 +236,35 @@ struct ipa_wdi3_data {
 
 	int (*ipa_wdi_release_smmu_mapping_per_inst)(u32 hdl, u32 num_buffers,
 		struct ipa_wdi_buffer_info *info);
+
+	int (*ipa_wdi_opt_dpath_register_flt_cb_per_inst)(
+		ipa_wdi_hdl_t hdl,
+		ipa_wdi_opt_dpath_flt_rsrv_cb flt_rsrv_cb,
+		ipa_wdi_opt_dpath_flt_rsrv_rel_cb flt_rsrv_rel_cb,
+		ipa_wdi_opt_dpath_flt_add_cb flt_add_cb,
+		ipa_wdi_opt_dpath_flt_rem_cb flt_rem_cb);
+
+	int (*ipa_wdi_opt_dpath_notify_flt_rsvd_per_inst)(ipa_wdi_hdl_t hdl,
+		bool is_success);
+
+	int (*ipa_wdi_opt_dpath_notify_flt_rlsd_per_inst)(ipa_wdi_hdl_t hdl,
+		bool is_success);
+
+	int (*ipa_wdi_opt_dpath_rsrv_filter_req)(
+		struct ipa_wlan_opt_dp_rsrv_filter_req_msg_v01 *req,
+		struct ipa_wlan_opt_dp_rsrv_filter_resp_msg_v01 *resp);
+
+	int (*ipa_wdi_opt_dpath_add_filter_req)(
+		struct ipa_wlan_opt_dp_add_filter_req_msg_v01 *req,
+		struct ipa_wlan_opt_dp_add_filter_complt_ind_msg_v01 *ind);
+
+	int (*ipa_wdi_opt_dpath_remove_filter_req)(
+			struct ipa_wlan_opt_dp_remove_filter_req_msg_v01 *req,
+			struct ipa_wlan_opt_dp_remove_filter_complt_ind_msg_v01 *ind);
+
+	int (*ipa_wdi_opt_dpath_remove_all_filter_req)(
+			struct ipa_wlan_opt_dp_remove_all_filter_req_msg_v01 *req,
+			struct ipa_wlan_opt_dp_remove_all_filter_resp_msg_v01 *resp);
 };
 
 struct ipa_qdss_data {
@@ -360,10 +389,6 @@ struct ipa_eth_data {
 
 	int (*ipa_eth_client_set_perf_profile)(struct ipa_eth_client *client,
 		struct ipa_eth_perf_profile *profile);
-
-	int (*ipa_eth_client_conn_evt)(struct ipa_ecm_msg *msg);
-
-	int (*ipa_eth_client_disconn_evt)(struct ipa_ecm_msg *msg);
 
 	enum ipa_client_type (*ipa_eth_get_ipa_client_type_from_eth_type)(
 		enum ipa_eth_client_type eth_client_type,

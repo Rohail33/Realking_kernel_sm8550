@@ -176,8 +176,11 @@ int mhi_init_irq_setup(struct mhi_controller *mhi_cntrl)
 				   mhi_intvec_threaded_handler,
 				   irq_flags,
 				   "bhi", mhi_cntrl);
-	if (ret)
+	if (ret) {
+		MHI_ERR(dev, "error requesting to irq:%d, ret=%d\n",
+			mhi_cntrl->irq[0], ret);
 		return ret;
+	}
 
 	for (i = 0; i < mhi_cntrl->total_ev_rings; i++, mhi_event++) {
 		if (mhi_event->offload_ev)
@@ -646,7 +649,7 @@ int mhi_init_chan_ctxt(struct mhi_controller *mhi_cntrl,
 
 	tre_ring->rp = tre_ring->wp = tre_ring->base;
 	buf_ring->rp = buf_ring->wp = buf_ring->base;
-	mhi_chan->db_cfg.db_mode = 1;
+	mhi_chan->db_cfg.db_mode = true;
 
 	/* Update to all cores */
 	smp_wmb();
@@ -880,6 +883,9 @@ static int parse_config(struct mhi_controller *mhi_cntrl,
 	if (!mhi_cntrl->timeout_ms)
 		mhi_cntrl->timeout_ms = MHI_TIMEOUT_MS;
 
+	if (config->bhie_offset)
+		mhi_cntrl->bhie = mhi_cntrl->regs + config->bhie_offset;
+
 	mhi_cntrl->bounce_buf = config->use_bounce_buf;
 	mhi_cntrl->buffer_len = config->buf_len;
 	if (!mhi_cntrl->buffer_len)
@@ -914,6 +920,10 @@ int mhi_register_controller(struct mhi_controller *mhi_cntrl,
 	    !mhi_cntrl->write_reg || !mhi_cntrl->nr_irqs ||
 	    !mhi_cntrl->irq || !mhi_cntrl->reg_len)
 		return -EINVAL;
+
+	/* Initialise BHI and BHIe Offsets*/
+	mhi_cntrl->bhi = NULL;
+	mhi_cntrl->bhie = NULL;
 
 	ret = parse_config(mhi_cntrl, config);
 	if (ret)
@@ -1019,10 +1029,6 @@ int mhi_register_controller(struct mhi_controller *mhi_cntrl,
 	/* Init wakeup source */
 	device_init_wakeup(&mhi_dev->dev, true);
 
-	ret = device_add(&mhi_dev->dev);
-	if (ret)
-		goto err_release_dev;
-
 	mhi_cntrl->mhi_dev = mhi_dev;
 
 	ret = mhi_misc_register_controller(mhi_cntrl);
@@ -1030,8 +1036,16 @@ int mhi_register_controller(struct mhi_controller *mhi_cntrl,
 		dev_err(mhi_cntrl->cntrl_dev,
 			"Could not enable miscellaneous features\n");
 		mhi_cntrl->mhi_dev = NULL;
-		goto err_release_dev;
+		goto err_ida_free;
 	}
+
+	ret = device_add(&mhi_dev->dev);
+	if (ret)
+		goto err_misc_release;
+
+	ret = mhi_misc_sysfs_create(mhi_cntrl);
+	if (ret)
+		goto err_release_dev;
 
 	mhi_create_debugfs(mhi_cntrl);
 
@@ -1039,6 +1053,8 @@ int mhi_register_controller(struct mhi_controller *mhi_cntrl,
 
 err_release_dev:
 	put_device(&mhi_dev->dev);
+err_misc_release:
+	mhi_misc_unregister_controller(mhi_cntrl);
 err_ida_free:
 	ida_free(&mhi_controller_ida, mhi_cntrl->index);
 err_destroy_wq:
@@ -1060,6 +1076,7 @@ void mhi_unregister_controller(struct mhi_controller *mhi_cntrl)
 	unsigned int i;
 
 	mhi_misc_unregister_controller(mhi_cntrl);
+	mhi_misc_sysfs_destroy(mhi_cntrl);
 
 	/* Free the memory controller wanted to preserve for BHIe images */
 	if (mhi_cntrl->img_pre_alloc) {
@@ -1134,7 +1151,7 @@ int mhi_prepare_for_power_up(struct mhi_controller *mhi_cntrl)
 	}
 	mhi_cntrl->bhi = mhi_cntrl->regs + bhi_off;
 
-	if (mhi_cntrl->fbc_download || mhi_cntrl->rddm_size) {
+	if (!mhi_cntrl->bhie && (mhi_cntrl->fbc_download || mhi_cntrl->rddm_size)) {
 		ret = mhi_read_reg(mhi_cntrl, mhi_cntrl->regs, BHIEOFF,
 				   &bhie_off);
 		if (ret) {
@@ -1187,9 +1204,6 @@ void mhi_unprepare_after_power_down(struct mhi_controller *mhi_cntrl)
 {
 	if (mhi_cntrl->rddm_image)
 		mhi_free_bhie_table(mhi_cntrl, &mhi_cntrl->rddm_image);
-
-	mhi_cntrl->bhi = NULL;
-	mhi_cntrl->bhie = NULL;
 
 	mhi_deinit_dev_ctxt(mhi_cntrl);
 }

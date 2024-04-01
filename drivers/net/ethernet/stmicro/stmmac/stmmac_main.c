@@ -660,6 +660,7 @@ static int stmmac_hwtstamp_set(struct net_device *dev, struct ifreq *ifr)
 	u32 ts_master_en = 0;
 	u32 ts_event_en = 0;
 	u32 av_8021asm_en = 0;
+	int ret = 0;
 
 	if (!(priv->dma_cap.time_stamp || priv->adv_ts)) {
 		netdev_alert(priv->dev, "No support for HW time stamping\n");
@@ -825,6 +826,10 @@ static int stmmac_hwtstamp_set(struct net_device *dev, struct ifreq *ifr)
 	priv->hwts_tx_en = config.tx_type == HWTSTAMP_TX_ON;
 
 	priv->systime_flags = STMMAC_HWTS_ACTIVE;
+
+	ret = stmmac_init_tstamp_counter(priv, STMMAC_HWTS_ACTIVE);
+	if (ret)
+		return ret;
 
 	if (priv->hwts_tx_en || priv->hwts_rx_en) {
 		priv->systime_flags |= tstamp_all | ptp_v2 |
@@ -1073,7 +1078,7 @@ static void stmmac_validate(struct phylink_config *config,
 	/* Early ethernet settings to bring up link in 100M,
 	 * Auto neg Off with full duplex link.
 	 */
-	if (priv->early_eth && !priv->early_eth_config_set) {
+	if (priv->phydev && priv->plat->early_eth && !priv->early_eth_config_set) {
 		priv->phydev->autoneg = AUTONEG_DISABLE;
 		priv->phydev->speed = SPEED_100;
 		priv->phydev->duplex = DUPLEX_FULL;
@@ -1245,7 +1250,7 @@ static void stmmac_mac_link_up(struct phylink_config *config,
 		stmmac_fpe_link_state_handle(priv, true);
 
 #ifdef CONFIG_MSM_BOOT_TIME_MARKER
-	if (phy->link == 1 && !priv->boot_kpi) {
+	if (!priv->boot_kpi) {
 		place_marker("M - Ethernet is Ready.Link is UP");
 		priv->boot_kpi = true;
 	}
@@ -1335,13 +1340,8 @@ static int stmmac_init_phy(struct net_device *dev)
 	if (!node || ret) {
 		int addr = priv->plat->phy_addr;
 
-		if (addr < 0) {
-			netdev_err(priv->dev, "no phy found\n");
-			return -ENODEV;
-		}
-
-		phydev = mdiobus_get_phy(priv->mii, addr);
-		if (!phydev) {
+		priv->phydev = mdiobus_get_phy(priv->mii, addr);
+		if (!priv->phydev) {
 			netdev_err(priv->dev, "no phy at addr %d\n", addr);
 			return -ENODEV;
 		}
@@ -3463,13 +3463,12 @@ static int stmmac_hw_setup(struct net_device *dev, bool ptp_register)
 		netdev_warn(priv->dev, "PTP not supported by HW\n");
 	else if (ret)
 		netdev_warn(priv->dev, "PTP init failed\n");
-	else if (ptp_register)
+	else if (ptp_register) {
 		stmmac_ptp_register(priv);
-	else
 		clk_set_rate(priv->plat->clk_ptp_ref,
 					 priv->plat->clk_ptp_rate);
-
-	ret = priv->plat->init_pps(priv);
+		ret = priv->plat->init_pps(priv);
+	}
 
 	priv->eee_tw_timer = STMMAC_DEFAULT_TWT_LS;
 
@@ -3927,6 +3926,7 @@ static int stmmac_open(struct net_device *dev)
 		}
 	}
 
+#ifdef CONFIG_PTPSUPPORT_OBJ
 	ret = stmmac_hw_setup(dev, true);
 #else
 	ret = stmmac_hw_setup(dev, false);
@@ -3949,6 +3949,9 @@ static int stmmac_open(struct net_device *dev)
 		/* We may have called phylink_speed_down before */
 		phylink_speed_up(priv->phylink);
 	}
+
+	if (!priv->phy_irq_enabled)
+		priv->plat->phy_irq_enable(priv);
 
 	ret = stmmac_request_irq(dev);
 	if (ret)
@@ -4005,6 +4008,9 @@ static int stmmac_release(struct net_device *dev)
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
 	u32 chan;
+
+	if (priv->phy_irq_enabled)
+		priv->plat->phy_irq_disable(priv);
 
 	netif_tx_disable(dev);
 
@@ -5297,6 +5303,47 @@ read_again:
 	return failure ? limit : (int)count;
 }
 
+static u16 csum(u16 old_csum)
+{
+	u16 new_checksum = 0;
+
+	new_checksum = ~(~old_csum + (-8) + 0);
+	return new_checksum;
+}
+
+void swap_ip_port(struct sk_buff *skb, unsigned int eth_type)
+{
+	__be32 temp_addr;
+	unsigned char *buf = skb->data;
+	struct icmphdr *icmp_hdr;
+	unsigned char eth_temp[ETH_ALEN] = {};
+	struct ethhdr *eth = (struct ethhdr *)(buf);
+	struct iphdr *ip_header;
+
+	if (eth_type == ETH_P_IP) {
+		ip_header = (struct iphdr *)(buf + sizeof(struct ethhdr));
+		if (ip_header->protocol == IPPROTO_UDP ||
+		    ip_header->protocol ==  IPPROTO_ICMP) {
+			//swap mac address
+			memcpy(eth_temp, eth->h_dest, ETH_ALEN);
+			memcpy(eth->h_dest, eth->h_source, ETH_ALEN);
+			memcpy(eth->h_source, eth_temp, ETH_ALEN);
+			//swap ip address
+			temp_addr = ip_header->daddr;
+			ip_header->daddr = ip_header->saddr;
+			ip_header->saddr = temp_addr;
+
+			icmp_hdr = (struct icmphdr *)(buf
+					+ sizeof(struct ethhdr)
+					+ sizeof(struct iphdr));
+			if (icmp_hdr->type == ICMP_ECHO) {
+				icmp_hdr->type = ICMP_ECHOREPLY;
+				icmp_hdr->checksum = csum(icmp_hdr->checksum);
+			}
+		}
+	}
+}
+
 /**
  * stmmac_rx - manage the receive process
  * @priv: driver private structure
@@ -5318,6 +5365,7 @@ static int stmmac_rx(struct stmmac_priv *priv, int limit, u32 queue)
 	struct xdp_buff xdp;
 	int xdp_status = 0;
 	int buf_sz;
+	unsigned int eth_type;
 
 	dma_dir = page_pool_get_dma_dir(rx_q->page_pool);
 	buf_sz = DIV_ROUND_UP(priv->dma_buf_sz, PAGE_SIZE) * PAGE_SIZE;
@@ -5529,6 +5577,12 @@ read_again:
 			page_pool_release_page(rx_q->page_pool, buf->sec_page);
 			buf->sec_page = NULL;
 		}
+
+		eth_type = priv->plat->get_eth_type(skb->data);
+
+		if (priv->current_loopback > 0 &&
+		    eth_type == ETH_P_IP)
+			swap_ip_port(skb, eth_type);
 
 drain_data:
 		if (likely(status & rx_not_ls))
@@ -5883,7 +5937,7 @@ static void stmmac_common_interrupt(struct stmmac_priv *priv)
 		}
 
 		/* PCS link status */
-		if (priv->hw->pcs) {
+		if (priv->hw->pcs && !priv->plat->has_gmac4) {
 			if (priv->xstats.pcs_link)
 				netif_carrier_on(priv->dev);
 			else
@@ -6984,6 +7038,10 @@ static int stmmac_hw_init(struct stmmac_priv *priv)
 	if (ret)
 		return ret;
 
+#if IS_ENABLED(CONFIG_DWXGMAC_QCOM_4K)
+	priv->ptpaddr = priv->ioaddr + XGMAC_TIMESTAMP_BASE_ADDR;
+#endif
+
 	/* Get the HW capability (new GMAC newer than 3.50a) */
 	priv->hw_cap_support = stmmac_get_hw_features(priv);
 	if (priv->hw_cap_support) {
@@ -7390,8 +7448,11 @@ int stmmac_dvr_probe(struct device *device,
 	ndev->features |= ndev->hw_features | NETIF_F_HIGHDMA;
 	ndev->watchdog_timeo = msecs_to_jiffies(watchdog);
 #ifdef STMMAC_VLAN_TAG_USED
+	ndev->vlan_features |= ndev->hw_features;
 	/* Both mac100 and gmac support receive VLAN tag detection */
 	ndev->features |= NETIF_F_HW_VLAN_CTAG_RX | NETIF_F_HW_VLAN_STAG_RX;
+	priv->dma_cap.vlhash = 0;
+	priv->dma_cap.vlins = 0;
 	if (priv->dma_cap.vlhash) {
 		ndev->features |= NETIF_F_HW_VLAN_CTAG_FILTER;
 		ndev->features |= NETIF_F_HW_VLAN_STAG_FILTER;
@@ -7493,6 +7554,10 @@ int stmmac_dvr_probe(struct device *device,
 			__func__, ret);
 		goto error_netdev_register;
 	}
+
+	/* Disable tx_coal_timer if plat provides callback */
+	priv->tx_coal_timer_disable =
+		plat_dat->get_plat_tx_coal_frames ? true : false;
 
 #ifdef CONFIG_DEBUG_FS
 	stmmac_init_fs(ndev);
