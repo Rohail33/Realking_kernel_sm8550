@@ -134,14 +134,12 @@ static int qcom_mhi_qrtr_probe(struct mhi_device *mhi_dev,
 		return rc;
 
 	/* start channels */
-	rc = mhi_prepare_for_transfer(mhi_dev, MHI_CH_INBOUND_ALLOC_BUFS);
+	rc = mhi_prepare_for_transfer(mhi_dev);
 	if (rc) {
 		qrtr_endpoint_unregister(&qdev->ep);
-		dev_set_drvdata(&mhi_dev->dev, NULL);
 		return rc;
 	}
 
-	complete_all(&qdev->prepared);
 	dev_dbg(qdev->dev, "Qualcomm MHI QRTR driver probed\n");
 
 	return 0;

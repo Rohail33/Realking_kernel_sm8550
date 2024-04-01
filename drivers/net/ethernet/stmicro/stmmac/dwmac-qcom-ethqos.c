@@ -1729,48 +1729,8 @@ static int qcom_ethqos_probe(struct platform_device *pdev)
 		plat_dat->has_c22_mdio_probe_capability = 0;
 	plat_dat->pmt = 1;
 	plat_dat->tso_en = of_property_read_bool(np, "snps,tso");
-	plat_dat->handle_prv_ioctl = ethqos_handle_prv_ioctl;
-	plat_dat->request_phy_wol = qcom_ethqos_request_phy_wol;
-	plat_dat->init_pps = ethqos_init_pps;
-
-	if (of_property_read_bool(pdev->dev.of_node, "qcom,arm-smmu")) {
-		emac_emb_smmu_ctx.pdev_master = pdev;
-		ret = of_platform_populate(pdev->dev.of_node,
-					   qcom_ethqos_match, NULL, &pdev->dev);
-		if (ret)
-			ETHQOSERR("Failed to populate EMAC platform\n");
-		if (emac_emb_smmu_ctx.ret) {
-			ETHQOSERR("smmu probe failed\n");
-			of_platform_depopulate(&pdev->dev);
-			ret = emac_emb_smmu_ctx.ret;
-			emac_emb_smmu_ctx.ret = 0;
-		}
-	}
-
-	/* Get rgmii interface speed for mac2c from device tree */
-	if (of_property_read_u32(np, "mac2mac-rgmii-speed",
-				 &plat_dat->mac2mac_rgmii_speed))
-		plat_dat->mac2mac_rgmii_speed = -1;
-	else
-		ETHQOSINFO("mac2mac rgmii speed = %d\n",
-			   plat_dat->mac2mac_rgmii_speed);
-
-	if (of_property_read_bool(pdev->dev.of_node,
-				  "emac-core-version")) {
-		/* Read emac core version value from dtsi */
-		ret = of_property_read_u32(pdev->dev.of_node,
-					   "emac-core-version",
-					   &ethqos->emac_ver);
-		if (ret) {
-			ETHQOSDBG(":resource emac-hw-ver! not in dtsi\n");
-			ethqos->emac_ver = EMAC_HW_NONE;
-			WARN_ON(1);
-		}
-	} else {
-		ethqos->emac_ver =
-		rgmii_readl(ethqos, EMAC_I0_EMAC_CORE_HW_VERSION_RGOFFADDR);
-	}
-	ETHQOSDBG(": emac_core_version = %d\n", ethqos->emac_ver);
+	if (of_device_is_compatible(np, "qcom,qcs404-ethqos"))
+		plat_dat->rx_clk_runs_in_lpi = 1;
 
 	ret = stmmac_dvr_probe(&pdev->dev, plat_dat, &stmmac_res);
 	if (ret)

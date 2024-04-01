@@ -123,6 +123,7 @@ static inline int __cpupri_find(struct cpupri *cp, struct task_struct *p,
 
 	if (lowest_mask) {
 		cpumask_and(lowest_mask, &p->cpus_mask, vec->mask);
+		cpumask_and(lowest_mask, lowest_mask, cpu_active_mask);
 
 #ifdef CONFIG_RT_SOFTINT_OPTIMIZATION
 		if (drop_nopreempts)
@@ -366,6 +367,7 @@ bool cpupri_check_rt(void)
 {
 	int cpu = raw_smp_processor_id();
 
-	return cpu_rq(cpu)->rd->cpupri.cpu_to_pri[cpu] > CPUPRI_NORMAL;
+	return (cpu_rq(cpu)->rd->cpupri.cpu_to_pri[cpu] > CPUPRI_NORMAL) &&
+	       (cpu_rq(cpu)->rt.rt_throttled == 0);
 }
 #endif

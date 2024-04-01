@@ -44,6 +44,7 @@
 #include <linux/kthread.h>
 #include <linux/init.h>
 #include <linux/mmu_notifier.h>
+#include <linux/cred.h>
 
 #include <asm/tlb.h>
 #include "internal.h"
@@ -751,6 +752,8 @@ static void __mark_oom_victim(struct task_struct *tsk)
  */
 static void mark_oom_victim(struct task_struct *tsk)
 {
+	const struct cred *cred;
+
 	WARN_ON(oom_killer_disabled);
 	/* OOM killer might race with memcg OOM */
 	if (test_and_set_tsk_thread_flag(tsk, TIF_MEMDIE))
@@ -767,7 +770,9 @@ static void mark_oom_victim(struct task_struct *tsk)
 	 */
 	__thaw_task(tsk);
 	atomic_inc(&oom_victims);
-	trace_mark_victim(tsk->pid);
+	cred = get_task_cred(tsk);
+	trace_mark_victim(tsk, cred->uid.val);
+	put_cred(cred);
 }
 
 /**
@@ -1277,12 +1282,13 @@ void add_to_oom_reaper(struct task_struct *p)
 	p = find_lock_task_mm(p);
 	if (!p)
 		return;
-
-	get_task_struct(p);
 	if (task_will_free_mem(p)) {
 		__mark_oom_victim(p);
-		__wake_oom_reaper(p);
+		if (!test_and_set_bit(MMF_OOM_REAP_QUEUED,
+				     &p->signal->oom_mm->flags)) {
+			get_task_struct(p);
+			__wake_oom_reaper(p);
+		}
 	}
 	task_unlock(p);
-	put_task_struct(p);
 }

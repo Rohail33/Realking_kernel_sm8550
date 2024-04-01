@@ -12,6 +12,7 @@
 #include <linux/uio.h>
 #include <linux/task_io_accounting_ops.h>
 #include "trace.h"
+#include <trace/hooks/direct_io.h>
 
 #include "../internal.h"
 
@@ -93,7 +94,6 @@ ssize_t iomap_dio_complete(struct iomap_dio *dio)
 		if (offset + ret > dio->i_size &&
 		    !(dio->flags & IOMAP_DIO_WRITE))
 			ret = dio->i_size - offset;
-		iocb->ki_pos += ret;
 	}
 
 	/*
@@ -119,18 +119,19 @@ ssize_t iomap_dio_complete(struct iomap_dio *dio)
 	}
 
 	inode_dio_end(file_inode(iocb->ki_filp));
-	/*
-	 * If this is a DSYNC write, make sure we push it to stable storage now
-	 * that we've written data.
-	 */
-	if (ret > 0 && (dio->flags & IOMAP_DIO_NEED_SYNC))
-		ret = generic_write_sync(iocb, ret);
+	if (ret > 0) {
+		iocb->ki_pos += ret;
 
-	if (ret > 0)
-		ret += dio->done_before;
-
+		/*
+		 * If this is a DSYNC write, make sure we push it to stable
+		 * storage now that we've written data.
+		 */
+		if (dio->flags & IOMAP_DIO_NEED_SYNC)
+			ret = generic_write_sync(iocb, ret);
+		if (ret > 0)
+			ret += dio->done_before;
+	}
 	kfree(dio);
-
 	return ret;
 }
 EXPORT_SYMBOL_GPL(iomap_dio_complete);
@@ -323,6 +324,7 @@ static loff_t iomap_dio_bio_iter(const struct iomap_iter *iter,
 		bio->bi_private = dio;
 		bio->bi_end_io = iomap_dio_bio_end_io;
 		bio->bi_opf = bio_opf;
+		trace_android_vh_direct_io_update_bio(dio->iocb, bio);
 
 		ret = bio_iov_iter_get_pages(bio, dio->submit.iter);
 		if (unlikely(ret)) {

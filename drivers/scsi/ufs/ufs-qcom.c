@@ -1095,8 +1095,7 @@ static void ufs_qcom_validate_link_params(struct ufs_hba *hba)
 		err = true;
 	}
 
-	if (err)
-		ufs_qcom_dump_attribs(hba);
+	return ufs_qcom_ice_resume(host);
 }
 
 static int ufs_qcom_link_startup_notify(struct ufs_hba *hba,
@@ -1136,14 +1135,10 @@ static int ufs_qcom_link_startup_notify(struct ufs_hba *hba,
 			goto out;
 
 		/*
-		 * Controller checks ICE configuration error without
-		 * checking if the command is SCSI command
+		 * Make sure the write to ref_clk reaches the destination and
+		 * not stored in a Write Buffer (WB).
 		 */
-		temp = readl_relaxed(host->dev_ref_clk_ctrl_mmio);
-		temp |= BIT(31);
-		writel_relaxed(temp, host->dev_ref_clk_ctrl_mmio);
-		/* ensure that UTP_SCASI_CHECK_DIS is enabled before link startup */
-		wmb();
+		readl(host->dev_ref_clk_ctrl_mmio);
 
 		/*
 		 * Some UFS devices (and may be host) have issues if LCC is
@@ -3252,8 +3247,12 @@ static int ufs_qcom_shared_ice_init(struct ufs_hba *hba)
 {
 	struct ufs_qcom_host *host = ufshcd_get_variant(hba);
 
-	if (!is_shared_ice_supported(host))
-		return 0;
+	hba->caps |= UFSHCD_CAP_CLK_GATING | UFSHCD_CAP_HIBERN8_WITH_CLK_GATING;
+	hba->caps |= UFSHCD_CAP_CLK_SCALING | UFSHCD_CAP_WB_WITH_CLK_SCALING;
+	hba->caps |= UFSHCD_CAP_AUTO_BKOPS_SUSPEND;
+	hba->caps |= UFSHCD_CAP_WB_EN;
+	hba->caps |= UFSHCD_CAP_CRYPTO;
+	hba->caps |= UFSHCD_CAP_AGGR_POWER_COLLAPSE;
 
 	/* Shared ICE is enabled by default */
 	return ufs_qcom_parse_shared_ice_config(hba);
@@ -4809,10 +4808,16 @@ MODULE_DEVICE_TABLE(acpi, ufs_qcom_acpi_match);
 #endif
 
 static const struct dev_pm_ops ufs_qcom_pm_ops = {
-	SET_SYSTEM_SLEEP_PM_OPS(ufs_qcom_system_suspend, ufs_qcom_system_resume)
 	SET_RUNTIME_PM_OPS(ufshcd_runtime_suspend, ufshcd_runtime_resume, NULL)
-	.prepare	 = ufs_qcom_suspend_prepare,
-	.complete	 = ufs_qcom_resume_complete,
+	.prepare	 = ufshcd_suspend_prepare,
+	.complete	 = ufshcd_resume_complete,
+#ifdef CONFIG_PM_SLEEP
+	.suspend         = ufshcd_system_suspend,
+	.resume          = ufshcd_system_resume,
+	.freeze          = ufshcd_system_freeze,
+	.restore         = ufshcd_system_restore,
+	.thaw            = ufshcd_system_thaw,
+#endif
 };
 
 static struct platform_driver ufs_qcom_pltform = {

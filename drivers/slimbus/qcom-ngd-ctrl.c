@@ -2075,40 +2075,26 @@ static int qcom_slim_ngd_ctrl_probe(struct platform_device *pdev)
 
 	ctrl->pdr = pdr_handle_alloc(slim_pd_status, ctrl);
 	if (IS_ERR(ctrl->pdr)) {
+		dev_err(dev, "Failed to init PDR handle\n");
 		ret = PTR_ERR(ctrl->pdr);
-		dev_err(dev, "Failed to init PDR handle: %d\n", ret);
-		goto err_out;
+		goto err_pdr_alloc;
 	}
 
 	pds = pdr_add_lookup(ctrl->pdr, "avs/audio", "msm/adsp/audio_pd");
 	if (IS_ERR(pds) && PTR_ERR(pds) != -EALREADY) {
 		ret = PTR_ERR(pds);
 		dev_err(dev, "pdr add lookup failed: %d\n", ret);
-		goto pdr_release;
-	}
-
-	ret = of_qcom_slim_ngd_register(dev, ctrl);
-	if (ret) {
-		SLIM_ERR(ctrl, "qcom_slim_ngd_register failed ret:%d\n", ret);
-		goto pdr_release;
+		goto err_pdr_lookup;
 	}
 
 	platform_driver_register(&qcom_slim_ngd_driver);
-	SLIM_INFO(ctrl, "NGD SB controller is up!\n");
-	return 0;
+	return of_qcom_slim_ngd_register(dev, ctrl);
 
-pdr_release:
-	pdr_handle_release(ctrl->pdr);
-err_out:
+err_pdr_alloc:
 	qcom_unregister_ssr_notifier(ctrl->notifier, &ctrl->nb);
 
-remove_ipc_sysfs:
-	if (ctrl->ipc_slimbus_log)
-		ipc_log_context_destroy(ctrl->ipc_slimbus_log);
-
-	if (ctrl->sysfs_created)
-		sysfs_remove_file(&pdev->dev.kobj,
-				  &dev_attr_debug_mask.attr);
+err_pdr_lookup:
+	pdr_handle_release(ctrl->pdr);
 
 	return ret;
 }

@@ -120,6 +120,7 @@ gfp_t readahead_gfp_mask(struct address_space *x)
 	gfp_t mask = mapping_gfp_mask(x) | __GFP_NORETRY | __GFP_NOWARN;
 
 	trace_android_rvh_set_readahead_gfp_mask(&mask);
+	trace_android_rvh_update_readahead_gfp_mask(x, &mask);
 	return mask;
 }
 EXPORT_SYMBOL_GPL(readahead_gfp_mask);
@@ -462,6 +463,8 @@ static void ondemand_readahead(struct readahead_control *ractl,
 	if (req_size > max_pages && bdi->io_pages > max_pages)
 		max_pages = min(req_size, bdi->io_pages);
 
+	trace_android_vh_ra_tuning_max_page(ractl, &max_pages);
+
 	/*
 	 * start of file
 	 */
@@ -580,6 +583,8 @@ void page_cache_sync_ra(struct readahead_control *ractl,
 		do_forced_ra = true;
 	}
 
+	trace_android_vh_page_cache_forced_ra(ractl, req_count, &do_forced_ra);
+
 	/* be dumb */
 	if (do_forced_ra) {
 		force_page_cache_ra(ractl, req_count);
@@ -637,7 +642,8 @@ ssize_t ksys_readahead(int fd, loff_t offset, size_t count)
 	 */
 	ret = -EINVAL;
 	if (!f.file->f_mapping || !f.file->f_mapping->a_ops ||
-	    !S_ISREG(file_inode(f.file)->i_mode))
+	    (!S_ISREG(file_inode(f.file)->i_mode) &&
+	    !S_ISBLK(file_inode(f.file)->i_mode)))
 		goto out;
 
 	ret = vfs_fadvise(f.file, offset, count, POSIX_FADV_WILLNEED);

@@ -117,6 +117,7 @@ static int net_assign_generic(struct net *net, unsigned int id, void *data)
 
 static int ops_init(const struct pernet_operations *ops, struct net *net)
 {
+	struct net_generic *ng;
 	int err = -ENOMEM;
 	void *data = NULL;
 
@@ -134,6 +135,12 @@ static int ops_init(const struct pernet_operations *ops, struct net *net)
 		err = ops->init(net);
 	if (!err)
 		return 0;
+
+	if (ops->id && ops->size) {
+		ng = rcu_dereference_protected(net->gen,
+					       lockdep_is_held(&pernet_ops_rwsem));
+		ng->ptr[*ops->id] = NULL;
+	}
 
 cleanup:
 	kfree(data);
@@ -1080,9 +1087,13 @@ void __init net_ns_init(void)
 	struct net_generic *ng;
 
 #ifdef CONFIG_NET_NS
-	net_cachep = kmem_cache_create("net_namespace", sizeof(struct net),
-					SMP_CACHE_BYTES,
-					SLAB_PANIC|SLAB_ACCOUNT, NULL);
+	/* Allocate size for struct ext_net instead of struct net
+	 * to fix a KMI issue when CONFIG_NETFILTER_FAMILY_BRIDGE
+	 * is enabled
+	 */
+	net_cachep = kmem_cache_create("net_namespace", sizeof(struct ext_net),
+				       SMP_CACHE_BYTES,
+				       SLAB_PANIC | SLAB_ACCOUNT, NULL);
 
 	/* Create workqueue for cleanup */
 	netns_wq = create_singlethread_workqueue("netns");

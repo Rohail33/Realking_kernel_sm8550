@@ -157,25 +157,10 @@ static void adsp_minidump(struct rproc *rproc)
 {
 	struct qcom_adsp *adsp = rproc->priv;
 
-	trace_rproc_qcom_event(dev_name(adsp->dev), "adsp_minidump", "enter");
-
 	if (rproc->dump_conf == RPROC_COREDUMP_DISABLED)
-		goto exit;
+		return;
 
-	qcom_minidump(rproc, adsp->minidump_id, adsp_segment_dump);
-
-exit:
-	trace_rproc_qcom_event(dev_name(adsp->dev), "adsp_minidump", "exit");
-}
-
-static int adsp_toggle_load_state(struct qmp *qmp, const char *name, bool enable)
-{
-	char buf[QMP_MSG_LEN] = {};
-
-	snprintf(buf, sizeof(buf),
-		 "{class: image, res: load_state, name: %s, val: %s}",
-		 name, enable ? "on" : "off");
-	return qmp_send(qmp, buf, sizeof(buf));
+	qcom_minidump(rproc, adsp->minidump_id);
 }
 
 static int adsp_pds_enable(struct qcom_adsp *adsp, struct device **pds,
@@ -872,6 +857,7 @@ static int adsp_alloc_memory_region(struct qcom_adsp *adsp)
 	}
 
 	ret = of_address_to_resource(node, 0, &r);
+	of_node_put(node);
 	if (ret)
 		return ret;
 
@@ -1120,6 +1106,7 @@ detach_active_pds:
 deinit_wakeup_source:
 	device_init_wakeup(adsp->dev, false);
 free_rproc:
+	device_init_wakeup(adsp->dev, false);
 	rproc_free(rproc);
 
 	return ret;
@@ -1135,6 +1122,7 @@ static int adsp_remove(struct platform_device *pdev)
 	qcom_remove_sysmon_subdev(adsp->sysmon);
 	qcom_remove_smd_subdev(adsp->rproc, &adsp->smd_subdev);
 	qcom_remove_ssr_subdev(adsp->rproc, &adsp->ssr_subdev);
+	adsp_pds_detach(adsp, adsp->proxy_pds, adsp->proxy_pd_count);
 	device_init_wakeup(adsp->dev, false);
 	rproc_free(adsp->rproc);
 
