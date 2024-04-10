@@ -26,6 +26,7 @@
 #include <dt-bindings/mfd/qcom-rpm.h>
 
 #include "clk-debug.h"
+#include "common.h"
 
 #define QCOM_RPM_KEY_SOFTWARE_ENABLE			0x6e657773
 #define QCOM_RPM_KEY_PIN_CTRL_CLK_BUFFER_ENABLE_KEY	0x62636370
@@ -1241,6 +1242,7 @@ DEFINE_CLK_SMD_RPM(monaco, bimc_gpu_clk, bimc_gpu_a_clk,
 						QCOM_SMD_RPM_MEM_CLK, 2);
 
 DEFINE_CLK_SMD_RPM_XO_BUFFER(monaco, ln_bb_clk2, ln_bb_clk2_a, 0x2);
+DEFINE_CLK_SMD_RPM_XO_BUFFER(monaco, rf_clk2, rf_clk2_a, 5);
 DEFINE_CLK_SMD_RPM_XO_BUFFER(monaco, rf_clk3, rf_clk3_a, 6);
 DEFINE_CLK_SMD_RPM_XO_BUFFER(monaco, cxo_d0, cxo_d0_a, 0);
 
@@ -1255,6 +1257,8 @@ static struct clk_hw *monaco_clks[] = {
 	[RPM_SMD_QDSS_A_CLK] = &holi_qdss_a_clk.hw,
 	[RPM_SMD_LN_BB_CLK2] = &monaco_ln_bb_clk2.hw,
 	[RPM_SMD_LN_BB_CLK2_A] = &monaco_ln_bb_clk2_a.hw,
+	[RPM_SMD_RF_CLK2] = &monaco_rf_clk2.hw,
+	[RPM_SMD_RF_CLK2_A] = &monaco_rf_clk2_a.hw,
 	[RPM_SMD_RF_CLK3] = &monaco_rf_clk3.hw,
 	[RPM_SMD_RF_CLK3_A] = &monaco_rf_clk3_a.hw,
 	[RPM_SMD_CNOC_CLK] = &holi_cnoc_clk.hw,
@@ -1592,6 +1596,11 @@ static int rpm_smd_clk_probe(struct platform_device *pdev)
 			dev_err(&pdev->dev, "Failed to register %s\n", name);
 			return ret;
 		}
+
+		ret = clk_hw_debug_register(&pdev->dev, hw_clks[i]);
+		if (ret)
+			dev_warn(&pdev->dev, "Failed to add %s to debug list\n",
+									name);
 	}
 
 	ret = devm_of_clk_add_hw_provider(&pdev->dev, qcom_smdrpm_clk_hw_get,

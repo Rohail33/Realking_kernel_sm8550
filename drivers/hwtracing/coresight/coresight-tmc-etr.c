@@ -1258,12 +1258,14 @@ static void tmc_etr_sync_sysfs_buf(struct tmc_drvdata *drvdata)
 	}
 }
 
-static void __tmc_etr_disable_hw(struct tmc_drvdata *drvdata)
+static void __tmc_etr_disable_hw(struct tmc_drvdata *drvdata, bool flush)
 {
 	CS_UNLOCK(drvdata->base);
 
-	tmc_flush_and_stop(drvdata);
-	tmc_disable_stop_on_flush(drvdata);
+	if (flush) {
+		tmc_flush_and_stop(drvdata);
+		tmc_disable_stop_on_flush(drvdata);
+	}
 	/*
 	 * When operating in sysFS mode the content of the buffer needs to be
 	 * read before the TMC is disabled.
@@ -1278,9 +1280,9 @@ static void __tmc_etr_disable_hw(struct tmc_drvdata *drvdata)
 
 }
 
-void tmc_etr_disable_hw(struct tmc_drvdata *drvdata)
+void tmc_etr_disable_hw(struct tmc_drvdata *drvdata, bool flush)
 {
-	__tmc_etr_disable_hw(drvdata);
+	__tmc_etr_disable_hw(drvdata, flush);
 	/* Disable CATU device if this ETR is connected to one */
 	tmc_etr_disable_catu(drvdata);
 	coresight_disclaim_device(drvdata->csdev);
@@ -1341,6 +1343,7 @@ static int tmc_enable_etr_sink_sysfs(struct coresight_device *csdev)
 		 */
 
 		if (new_buf) {
+			sysfs_buf = READ_ONCE(drvdata->sysfs_buf);
 			free_buf = sysfs_buf;
 			drvdata->sysfs_buf = new_buf;
 		}
@@ -1365,7 +1368,7 @@ static int tmc_enable_etr_sink_sysfs(struct coresight_device *csdev)
 		if (drvdata->out_mode == TMC_ETR_OUT_MODE_USB &&
 			drvdata->usb_data->usb_mode == TMC_ETR_USB_SW) {
 			spin_lock_irqsave(&drvdata->spinlock, flags);
-			tmc_etr_disable_hw(drvdata);
+			tmc_etr_disable_hw(drvdata, true);
 			spin_unlock_irqrestore(&drvdata->spinlock, flags);
 		}
 
@@ -1873,7 +1876,7 @@ static int _tmc_disable_etr_sink(struct coresight_device *csdev,
 
 			spin_lock_irqsave(&drvdata->spinlock, flags);
 		}
-		tmc_etr_disable_hw(drvdata);
+		tmc_etr_disable_hw(drvdata, !mode_switch);
 	} else if (drvdata->out_mode == TMC_ETR_OUT_MODE_USB &&
 		drvdata->usb_data->usb_mode == TMC_ETR_USB_BAM_TO_BAM){
 		spin_unlock_irqrestore(&drvdata->spinlock, flags);
@@ -2027,7 +2030,7 @@ int tmc_read_prepare_etr(struct tmc_drvdata *drvdata)
 
 	/* Disable the TMC if we are trying to read from a running session. */
 	if (drvdata->mode == CS_MODE_SYSFS)
-		__tmc_etr_disable_hw(drvdata);
+		__tmc_etr_disable_hw(drvdata, true);
 
 	drvdata->reading = true;
 out:

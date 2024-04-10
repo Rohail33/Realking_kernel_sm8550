@@ -62,7 +62,6 @@ static int tmc_pcie_sw_start(struct tmc_pcie_data *pcie_data)
 					PCIE_BLK_SIZE / 8);
 	atomic_set(&pcie_data->irq_cnt, 0);
 	pcie_data->total_size = 0;
-	pcie_data->drop_size = 0;
 	pcie_data->offset = 0;
 	pcie_data->total_irq = 0;
 	mutex_unlock(&pcie_data->pcie_lock);
@@ -72,6 +71,8 @@ static int tmc_pcie_sw_start(struct tmc_pcie_data *pcie_data)
 				&pcie_data->pcie_open_work);
 
 	queue_work(pcie_data->pcie_wq, &pcie_data->pcie_write_work);
+	dev_info(pcie_data->dev, "tmc pcie sw path enabled\n");
+
 	return 0;
 }
 
@@ -163,7 +164,6 @@ static void tmc_pcie_write_work_fn(struct work_struct *work)
 	int ret = 0;
 	struct mhi_req *req;
 	size_t actual;
-	size_t drop_size;
 	int bytes_to_write;
 	char *buf;
 
@@ -219,14 +219,12 @@ static void tmc_pcie_write_work_fn(struct work_struct *work)
 
 		bytes_to_write = mhi_dev_write_channel(req);
 
-		if (bytes_to_write != PCIE_BLK_SIZE) {
-			drop_size = actual - bytes_to_write;
+		if (bytes_to_write != actual) {
 			dev_err_ratelimited(pcie_data->dev,
-				"pcie drop data %d\n", drop_size);
-			pcie_data->drop_size += drop_size;
+				"Write error %d\n", bytes_to_write);
 			kfree(req);
 			req = NULL;
-			continue;
+			break;
 		}
 
 		pcie_data->total_size += actual;
@@ -256,10 +254,99 @@ static int tmc_pcie_sw_init(struct tmc_pcie_data *pcie_data)
 	if (ret)
 		pcie_data->buf_size = TMC_PCIE_MEM_SIZE;
 
-	dev_info(dev, "setting tmc etr sw usb buf size 0x%x\n", pcie_data->buf_size);
+	dev_info(dev, "setting tmc etr sw pcie buf size 0x%x\n", pcie_data->buf_size);
 	mutex_init(&pcie_data->pcie_lock);
 
 	return tmc_register_pcie_channel(pcie_data);
+}
+
+static int tmc_pcie_alloc_buf(struct tmc_pcie_data *pcie_data)
+{
+	struct tmc_pcie_buf	*pcie_desc_buf;
+	struct tmc_pcie_buf	*pcie_data_buf;
+	struct device *dev = pcie_data->dev;
+	struct device_node *node = dev->of_node;
+	int ret = 0;
+	u32 value = 0;
+
+	pcie_desc_buf = kzalloc(sizeof(*pcie_desc_buf), GFP_KERNEL);
+	if (!pcie_desc_buf) {
+		ret = -ENOMEM;
+		goto error;
+	}
+
+	ret = of_property_read_u32(node, "pcie-desc-buf-size", &value);
+	if (ret)
+		pcie_desc_buf->size = PCIE_DESC_BUF_SIZE;
+	else
+		pcie_desc_buf->size = value;
+
+	pcie_desc_buf->vaddr = dma_alloc_noncoherent(pcie_data->dev, pcie_desc_buf->size = value,
+							&pcie_desc_buf->daddr, DMA_FROM_DEVICE,
+							GFP_KERNEL);
+	if (!pcie_desc_buf->vaddr) {
+		ret = -ENOMEM;
+		goto desc_kfree;
+	}
+
+	pcie_data->pcie_desc_buf = pcie_desc_buf;
+	pcie_data->ipa_data->ipa_qdss_in.desc_fifo_base_addr =
+				dma_to_phys(dev, pcie_data->pcie_desc_buf->daddr);
+	pcie_data->ipa_data->ipa_qdss_in.desc_fifo_size = PCIE_DESC_BUF_SIZE;
+
+	pcie_data_buf = kzalloc(sizeof(*pcie_data_buf), GFP_KERNEL);
+	if (!pcie_data_buf) {
+		ret = -ENOMEM;
+		goto desc_dma_free;
+	}
+
+	ret = of_property_read_u32(node, "pcie-data-buf-size", &value);
+	if (ret)
+		pcie_data_buf->size = PCIE_DATA_BUF_SIZE;
+	else
+		pcie_data_buf->size = value;
+
+	pcie_data_buf->vaddr = dma_alloc_noncoherent(pcie_data->dev, pcie_data_buf->size,
+						&pcie_data_buf->daddr, DMA_FROM_DEVICE,
+						GFP_KERNEL);
+	if (!pcie_data_buf->vaddr) {
+		ret = -ENOMEM;
+		goto data_kfree;
+	}
+
+	pcie_data->pcie_data_buf = pcie_data_buf;
+	pcie_data->ipa_data->ipa_qdss_in.data_fifo_base_addr =
+				dma_to_phys(dev, pcie_data->pcie_data_buf->daddr);
+	pcie_data->ipa_data->ipa_qdss_in.data_fifo_size = PCIE_DATA_BUF_SIZE;
+
+	return ret;
+
+data_kfree:
+	kfree(pcie_data_buf);
+desc_dma_free:
+	dma_free_noncoherent(pcie_data->dev, PCIE_DESC_BUF_SIZE,
+			pcie_desc_buf->vaddr, pcie_desc_buf->daddr,
+			DMA_FROM_DEVICE);
+desc_kfree:
+	kfree(pcie_desc_buf);
+error:
+	return ret;
+}
+
+static void tmc_pcie_free_buf(struct tmc_pcie_data *pcie_data)
+{
+	if (!pcie_data)
+		return;
+
+	dma_free_noncoherent(pcie_data->dev, PCIE_DATA_BUF_SIZE,
+			pcie_data->pcie_data_buf->vaddr, pcie_data->pcie_data_buf->daddr,
+			DMA_FROM_DEVICE);
+	kfree(pcie_data->pcie_data_buf);
+
+	dma_free_noncoherent(pcie_data->dev, PCIE_DESC_BUF_SIZE,
+			pcie_data->pcie_desc_buf->vaddr, pcie_data->pcie_desc_buf->daddr,
+			DMA_FROM_DEVICE);
+	kfree(pcie_data->pcie_desc_buf);
 }
 
 static int tmc_pcie_bam_enable(struct tmc_pcie_data *pcie_data)
@@ -307,9 +394,7 @@ static int tmc_pcie_bam_enable(struct tmc_pcie_data *pcie_data)
 		ipa_data->ipa_qdss_in.desc_fifo_base_addr;
 	bamdata->connect.desc.size =
 		ipa_data->ipa_qdss_in.desc_fifo_size;
-	bamdata->connect.desc.base =
-		ioremap(bamdata->connect.desc.phys_base,
-		bamdata->connect.desc.size);
+	bamdata->connect.desc.base = pcie_data->pcie_desc_buf->vaddr;
 	if (!bamdata->connect.desc.base) {
 		ret = -ENOMEM;
 		goto err1;
@@ -319,9 +404,7 @@ static int tmc_pcie_bam_enable(struct tmc_pcie_data *pcie_data)
 		ipa_data->ipa_qdss_in.data_fifo_base_addr;
 	bamdata->connect.data.size =
 		ipa_data->ipa_qdss_in.data_fifo_size;
-	bamdata->connect.data.base =
-		ioremap(bamdata->connect.data.phys_base,
-		bamdata->connect.data.size);
+	bamdata->connect.data.base = pcie_data->pcie_data_buf->vaddr;
 	if (!bamdata->connect.data.base) {
 		ret = -ENOMEM;
 		goto err1;
@@ -367,46 +450,22 @@ static int tmc_pcie_hw_init(struct tmc_pcie_data *pcie_data)
 	if (!ipa_data)
 		return -ENOMEM;
 
-	ret = of_property_read_u32(node, "ipa-conn-data-base-pa", &value);
-	if (ret) {
-		pr_err("%s: Invalid ipa data base address property\n",
-			__func__);
-		return -EINVAL;
-	}
-	ipa_data->ipa_qdss_in.data_fifo_base_addr = value;
+	pcie_data->ipa_data = ipa_data;
 
-	ret = of_property_read_u32(node, "ipa-conn-data-size", &value);
-	if (ret) {
-		pr_err("%s: Invalid ipa data base size\n", __func__);
-		return  -EINVAL;
-	}
-	ipa_data->ipa_qdss_in.data_fifo_size = value;
-	ret = of_property_read_u32(node, "ipa-conn-desc-base-pa", &value);
-	if (ret) {
-		pr_err("%s: Invalid ipa desc base address property\n",
-			__func__);
-		return  -EINVAL;
-	}
-	ipa_data->ipa_qdss_in.desc_fifo_base_addr = value;
-	ret = of_property_read_u32(node, "ipa-conn-desc-size", &value);
-	if (ret) {
-		pr_err("%s: Invalid ipa desc size  property\n", __func__);
-		return -EINVAL;
-	}
-	ipa_data->ipa_qdss_in.desc_fifo_size = value;
 	ret = of_property_read_u32(node, "ipa-peer-evt-reg-pa", &value);
 	if (ret) {
 		pr_err("%s: Invalid ipa peer reg pa property\n", __func__);
-		return -EINVAL;
+		return ret;
 	}
+
 	ipa_data->ipa_qdss_in.bam_p_evt_dest_addr = value;
 	ipa_data->ipa_qdss_in.bam_p_evt_threshold = 0x4;
 	ipa_data->ipa_qdss_in.override_eot = 0x1;
-	pcie_data->ipa_data = ipa_data;
 
 	bamdata = devm_kzalloc(dev, sizeof(*bamdata), GFP_KERNEL);
 	if (!bamdata)
 		return -ENOMEM;
+
 	pcie_data->bamdata = bamdata;
 
 	ret = of_address_to_resource(node, 1, &res);
@@ -418,6 +477,7 @@ static int tmc_pcie_hw_init(struct tmc_pcie_data *pcie_data)
 					resource_size(&res));
 	if (!bamdata->props.virt_addr)
 		return -ENOMEM;
+
 	bamdata->props.virt_size = resource_size(&res);
 
 	bamdata->props.event_threshold = 0x4; /* Pipe event threshold */
@@ -429,6 +489,7 @@ static int tmc_pcie_hw_init(struct tmc_pcie_data *pcie_data)
 		mapping_config = qcom_iommu_get_mappings_configuration(domain);
 		if (mapping_config < 0)
 			return -ENOMEM;
+
 		if (!(mapping_config & QCOM_IOMMU_MAPPING_CONF_S1_BYPASS)) {
 			pr_debug("%s: setting SPS_BAM_SMMU_EN flag with (%s)\n",
 					__func__, dev_name(dev));
@@ -548,9 +609,14 @@ static int tmc_pcie_hw_enable(struct tmc_pcie_data *pcie_data)
 {
 	int ret;
 
+	ret = tmc_pcie_alloc_buf(pcie_data);
+	if (ret)
+		return ret;
+
 	ret = tmc_pcie_ipa_conn(pcie_data);
 	if (ret)
 		return ret;
+
 	ret = tmc_pcie_bam_enable(pcie_data);
 	if (ret) {
 		tmc_pcie_ipa_disconn();
@@ -563,6 +629,7 @@ static int tmc_pcie_hw_enable(struct tmc_pcie_data *pcie_data)
 		return ret;
 	}
 
+	dev_info(pcie_data->dev, "tmc pcie hw path enabled\n");
 	return 0;
 }
 
@@ -571,6 +638,7 @@ static void tmc_pcie_hw_disable(struct tmc_pcie_data *pcie_data)
 	__tmc_pcie_disable_to_bam(pcie_data);
 	tmc_pcie_bam_disable(pcie_data);
 	tmc_pcie_ipa_disconn();
+	tmc_pcie_free_buf(pcie_data);
 }
 
 int tmc_pcie_enable(struct tmc_pcie_data *pcie_data)
@@ -592,9 +660,8 @@ void tmc_pcie_disable(struct tmc_pcie_data *pcie_data)
 		tmc_pcie_sw_stop(pcie_data);
 		flush_work(&pcie_data->pcie_write_work);
 		dev_info(pcie_data->dev,
-		"qdss receive total irq: %ld, send data %ld, drop data:%ld\n",
-		pcie_data->total_irq, pcie_data->total_size,
-		pcie_data->drop_size);
+		"qdss receive total irq: %ld, send data %ld\n",
+		pcie_data->total_irq, pcie_data->total_size);
 	} else
 		return tmc_pcie_hw_disable(pcie_data);
 }
@@ -620,7 +687,7 @@ int tmc_pcie_init(struct amba_device *adev,
 		byte_cntr_data->pcie_data = pcie_data;
 
 		if (tmc_pcie_support_ipa(dev)) {
-			ret = tmc_pcie_hw_init(pcie_data);
+			ret = tmc_pcie_hw_init(drvdata->pcie_data);
 
 			if (ret)
 				return ret;
@@ -631,7 +698,7 @@ int tmc_pcie_init(struct amba_device *adev,
 		if (ret)
 			return ret;
 
-		pcie_data->pcie_path = TMC_PCIE_SW_PATH;
+		pcie_data->pcie_path = TMC_PCIE_HW_PATH;
 
 		drvdata->mode_support |= BIT(TMC_ETR_OUT_MODE_PCIE);
 		dev_info(dev, "pcie mode init success.\n");
