@@ -855,12 +855,18 @@ static int (*staling_mode_ops[LLCC_STALING_MODE_MAX])(u32, struct llcc_staling_m
 int llcc_configure_staling_mode(struct llcc_slice_desc *desc,
 				struct llcc_staling_mode_params *p)
 
-{
-	u32 sid;
-	enum llcc_staling_mode m;
+		disable_cap_alloc = config->dis_cap_alloc << config->slice_id;
+		ret = regmap_update_bits(drv_data->bcast_regmap, LLCC_TRP_SCID_DIS_CAP_ALLOC,
+					 BIT(config->slice_id), disable_cap_alloc);
+		if (ret)
+			return ret;
 
-	if (IS_ERR(drv_data))
-		return PTR_ERR(drv_data);
+		retain_pc = config->retain_on_pc << config->slice_id;
+		ret = regmap_update_bits(drv_data->bcast_regmap, LLCC_TRP_PCB_ACT,
+					 BIT(config->slice_id), retain_pc);
+		if (ret)
+			return ret;
+	}
 
 	if (drv_data->llcc_ver < 50)
 		return -EOPNOTSUPP;
